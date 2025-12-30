@@ -1,0 +1,8 @@
+[package]
+name = "plat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cgmath = "0.18.0"
+termion = "4.0.6"
