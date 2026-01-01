@@ -86,9 +86,9 @@ impl Display for MapCell {
 const LEVEL: [&str; 8] = [
     "################",
     "#..............#",
-    "#..............#",
-    "#..............#",
-    "#......##.#....#",
+    "#........|.....#",
+    "#........|.....#",
+    "#......##.#.#..#",
     "#.....#........#",
     "#.@..|.........#",
     "################"
@@ -137,36 +137,48 @@ impl GameState {
 
     fn supported(&self) -> bool {
         let support = self[self.player_loc + (0, 1)];
-        support != MapCell::Empty && support != OffMap
+        (support != MapCell::Empty && support != OffMap) ||
+            self[self.player_loc] == MapCell::Ladder
     }
 
-    fn walkable<T: Into<MapCoord>>(&self, coord: T) -> bool {
+    fn navigable<T: Into<MapCoord>>(&self, coord: T) -> bool {
         let c = self[coord.into()];
         c == MapCell::Empty || c == MapCell::Ladder
     }
 
     fn all_moves(&self) -> Vec<Maneuver> {
-        if !self.supported() {
-            vec![Maneuver::Fall]
-        } else {
-            let mut moves = vec![];
-            let all = vec![
-                Maneuver::WalkLeft,
-                Maneuver::WalkRight,
-                Maneuver::JumpLeft,
-                Maneuver::JumpRight,
-                Maneuver::JumpUp,
-                Maneuver::ClimbUp,
-                Maneuver::ClimbDown,
-                Maneuver::Wait];
+        let mut moves = vec![];
+        let supported = self.supported();
+        let wall_left = self[self.player_loc + (-1, 0)] == MapCell::Wall;
+        let wall_right = self[self.player_loc + (1, 0)] == MapCell::Wall;
+        let on_ladder = self[self.player_loc] == MapCell::Ladder;
+        let above_ladder = self[self.player_loc + (0, 1)] == MapCell::Ladder;
 
-            for maneuver in all {
-                if self.walkable(self.player_loc + maneuver.delta(self.momentum)) {
-                    moves.push(maneuver);
-                }
-            }
-            moves
+        if supported {
+            // On the ground or a ladder, we can walk or jump or just stand there
+            moves.push(Maneuver::WalkLeft);
+            moves.push(Maneuver::WalkRight);
+            moves.push(Maneuver::JumpUp);
+            moves.push(Maneuver::Wait);
+        } else {
+            // Unsupported, gravity takes us
+            moves.push(Maneuver::Fall);
         }
+
+        // If we're on solid ground or next to a wall, and the target is clear, we can jump
+        if supported || wall_right { moves.push(Maneuver::JumpLeft) }
+        if supported || wall_left { moves.push(Maneuver::JumpRight) }
+
+        // If we're on a ladder, we can climb up
+        if on_ladder { moves.push(Maneuver::ClimbUp) }
+
+        // On or above a ladder, climb down
+        if on_ladder || above_ladder { moves.push(Maneuver::ClimbDown) }
+
+        // Only give the moves that don't lead us into a wall or off-map
+        moves.into_iter()
+            .filter(|m| self.navigable(self.player_loc + m.delta(self.momentum)))
+            .collect()
     }
 
     fn make_move(&mut self, maneuver: Maneuver) {
@@ -175,6 +187,11 @@ impl GameState {
             Maneuver::JumpLeft => Momentum::Left,
             Maneuver::JumpRight => Momentum::Right,
             _ => Momentum::None
+        };
+
+        // If our momentum would carry us into a wall if we fall, then kill our momentum
+        if !self.navigable(self.player_loc + Maneuver::Fall.delta(self.momentum)) {
+            self.momentum = Momentum::None
         }
     }
 }
@@ -254,7 +271,10 @@ fn move_for_key(key: char, game_state: &GameState) -> Option<Maneuver> {
 fn main() {
     let mut game = GameState::from_strings(LEVEL);
     {
+        // Make a RawTerminal for its side effects
         let rt = stdout().into_raw_mode().unwrap();
+        let _ = rt;
+
         let mut exit = false;
         print!("{}", game);
         for e in stdin().events_and_raw() {
