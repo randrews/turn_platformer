@@ -2,11 +2,10 @@ use std::fmt::{Display, Formatter, Write};
 use std::io::{stdin, stdout};
 use std::ops::{Add, Index};
 use cgmath::Vector2;
-use termion::color::{Bg, Black, Blue, Fg, Red, Reset, White, Yellow};
+use termion::color::{Bg, Black, Blue, Fg, Green, LightYellow, Red, Reset, White, Yellow};
 use termion::event::{Event, Key};
 use termion::input::TermReadEventsAndRaw;
 use termion::raw::IntoRawMode;
-use crate::MapCell::OffMap;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Maneuver {
@@ -81,10 +80,10 @@ impl Display for MapCell {
 
 const LEVEL: [&str; 8] = [
     "################",
-    "#..............#",
-    "#........|.....#",
-    "#........|.....#",
-    "#......##.#.#..#",
+    "#.........*....#",
+    "#.....*..|...*.#",
+    "#....*...|..*..#",
+    "#.*....##.#.#..#",
     "#.....#........#",
     "#.@..|.........#",
     "################"
@@ -94,6 +93,7 @@ struct GameState {
     player_loc: MapCoord,
     map_size: Vector2<usize>,
     level: Vec<MapCell>,
+    coins: Vec<MapCoord>,
     momentum: Momentum
 }
 
@@ -105,6 +105,7 @@ impl GameState {
         let width = level_strings[0].as_ref().len();
         let mut player_loc = None;
         let mut level = Vec::with_capacity(height * width);
+        let mut coins = vec![];
         for (y, line) in level_strings.into_iter().enumerate() {
             for (x, ch) in line.as_ref().chars().enumerate() {
                 let cell = match ch {
@@ -112,6 +113,10 @@ impl GameState {
                     '|' => MapCell::Ladder,
                     '@' => {
                         player_loc = Some((x, y).into());
+                        MapCell::Empty
+                    }
+                    '*' => {
+                        coins.push((x, y).into());
                         MapCell::Empty
                     }
                     _ => MapCell::Empty
@@ -123,6 +128,7 @@ impl GameState {
             player_loc: player_loc.unwrap(),
             map_size: (width, height).into(),
             level,
+            coins,
             momentum: Momentum::None
         }
     }
@@ -133,7 +139,7 @@ impl GameState {
 
     fn supported(&self) -> bool {
         let support = self[self.player_loc + (0, 1)];
-        (support != MapCell::Empty && support != OffMap) ||
+        (support != MapCell::Empty && support != MapCell::OffMap) ||
             self[self.player_loc] == MapCell::Ladder
     }
 
@@ -187,6 +193,9 @@ impl GameState {
             Maneuver::JumpLeft => Momentum::Left,
             Maneuver::JumpRight => Momentum::Right,
             _ => Momentum::None
+        };
+        if let Some(i) = self.coins.iter().position(|c| c == &self.player_loc) {
+            self.coins.swap_remove(i);
         }
     }
 }
@@ -224,7 +233,7 @@ impl<T: Into<MapCoord>> Index<T> for GameState {
     fn index(&self, index: T) -> &Self::Output {
         let MapCoord(index) = index.into();
         if index.x < 0 || index.y < 0 || index.x >= self.map_size.x as isize || index.y >= self.map_size.y as isize {
-            &OffMap
+            &MapCell::OffMap
         } else {
             &self.level[index.x as usize + index.y as usize * self.map_size.x]
         }
@@ -246,7 +255,13 @@ impl Display for GameState {
                 if self.player_loc == (x, y).into() {
                     write!(f, "{}@", Fg(Blue))?;
                 } else if let Some((_, ch, _)) = move_tuples.iter().find(|t| t.0 == (x, y).into()) {
-                    write!(f, "{}{}", Fg(Yellow), ch)?;
+                    if self.coins.contains(&(x, y).into()) {
+                        write!(f, "{}{}", Fg(LightYellow), ch)?;
+                    } else {
+                        write!(f, "{}{}", Fg(Green), ch)?;
+                    }
+                } else if self.coins.contains(&(x, y).into()) {
+                    write!(f, "{}*", Fg(LightYellow))?;
                 } else {
                     write!(f, "{}", self[(x, y)])?;
                 }
