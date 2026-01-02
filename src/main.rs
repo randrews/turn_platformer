@@ -17,7 +17,7 @@ enum Maneuver {
     JumpUp,
     ClimbUp,
     ClimbDown,
-    Fall,
+    Fall(Momentum),
     Wait
 }
 
@@ -32,11 +32,11 @@ impl Maneuver {
             Maneuver::ClimbUp => 'w',
             Maneuver::ClimbDown => 'x',
             Maneuver::Wait => 's',
-            Maneuver::Fall => 's'
+            Maneuver::Fall(_) => 's'
         }
     }
 
-    pub fn delta(&self, momentum: Momentum) -> Vector2<isize> {
+    pub fn delta(&self) -> Vector2<isize> {
         match self {
             Maneuver::WalkLeft => Vector2::new(-1, 0),
             Maneuver::WalkRight => Vector2::new(1, 0),
@@ -46,13 +46,9 @@ impl Maneuver {
             Maneuver::ClimbUp => Vector2::new(0, -1),
             Maneuver::ClimbDown => Vector2::new(0, 1),
             Maneuver::Wait => Vector2::new(0, 0),
-            Maneuver::Fall => {
-                match momentum {
-                    Momentum::Left => Vector2::new(-1, 1),
-                    Momentum::Right => Vector2::new(1, 1),
-                    Momentum::None => Vector2::new(0, 1)
-                }
-            },
+            Maneuver::Fall(Momentum::None) => Vector2::new(0, 1),
+            Maneuver::Fall(Momentum::Left) => Vector2::new(-1, 1),
+            Maneuver::Fall(Momentum::Right) => Vector2::new(1, 1),
         }
     }
 }
@@ -153,16 +149,20 @@ impl GameState {
         let wall_right = self[self.player_loc + (1, 0)] == MapCell::Wall;
         let on_ladder = self[self.player_loc] == MapCell::Ladder;
         let above_ladder = self[self.player_loc + (0, 1)] == MapCell::Ladder;
+        let fall_target = self.player_loc + Maneuver::Fall(self.momentum).delta();
 
-        if supported {
-            // On the ground or a ladder, we can walk or jump or just stand there
+        if supported { // On the ground or a ladder, we can walk or jump or just stand there
             moves.push(Maneuver::WalkLeft);
             moves.push(Maneuver::WalkRight);
             moves.push(Maneuver::JumpUp);
             moves.push(Maneuver::Wait);
-        } else {
-            // Unsupported, gravity takes us
-            moves.push(Maneuver::Fall);
+        } else { // Unsupported, gravity takes us
+            // If the place our momentum takes us is navigable, use that
+            if self.navigable(fall_target) {
+                moves.push(Maneuver::Fall(self.momentum))
+            } else { // Otherwise, kill the momentum
+                moves.push(Maneuver::Fall(Momentum::None))
+            }
         }
 
         // If we're on solid ground or next to a wall, and the target is clear, we can jump
@@ -177,21 +177,16 @@ impl GameState {
 
         // Only give the moves that don't lead us into a wall or off-map
         moves.into_iter()
-            .filter(|m| self.navigable(self.player_loc + m.delta(self.momentum)))
+            .filter(|m| self.navigable(self.player_loc + m.delta()))
             .collect()
     }
 
     fn make_move(&mut self, maneuver: Maneuver) {
-        self.player_loc = self.player_loc + maneuver.delta(self.momentum);
+        self.player_loc = self.player_loc + maneuver.delta();
         self.momentum = match maneuver {
             Maneuver::JumpLeft => Momentum::Left,
             Maneuver::JumpRight => Momentum::Right,
             _ => Momentum::None
-        };
-
-        // If our momentum would carry us into a wall if we fall, then kill our momentum
-        if !self.navigable(self.player_loc + Maneuver::Fall.delta(self.momentum)) {
-            self.momentum = Momentum::None
         }
     }
 }
@@ -242,7 +237,7 @@ impl Display for GameState {
         let possible_moves = self.all_moves();
         let move_tuples = possible_moves.into_iter().map(|m| {
             let ch = m.key();
-            let target = self.player_loc + m.delta(self.momentum);
+            let target = self.player_loc + m.delta();
             (target, ch, m)
         }).collect::<Vec<_>>();
 
